@@ -8,7 +8,9 @@ A small Linux CLI app that:
 4. Prints the matching lyric line in real time
 
 ## Usage
-
+1. Turn on Live Broadcasting in settings with the info of your choice. Example:
+<img width="1018" height="245" alt="Screenshot from 2026-08-30 17-48-54" src="https://github.com/user-attachments/assets/1e646639-daec-418a-a220-69678e3e2392" />
+2. Run the python file in the folder:
 ```bash
 python3 mixxx_lrc.py \
   --stats-url http://127.0.0.1:8000/status-json.xsl \
