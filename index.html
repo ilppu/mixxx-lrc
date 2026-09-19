@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mixxx LRC</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <section class="content">
+      <header class="topbar"><div class="brand"><span class="brand-mark">L</span><span>mixxx<span class="brand-accent">/</span>lrc</span><div class="topbar-title"><p class="eyebrow">Live session</p><h1>Now playing</h1></div></div><div class="header-actions"><div class="connection-status"><span class="signal-dot"></span><div><strong id="connection-label">Local player</strong><small id="connection-detail">Ready for a song</small></div></div><button class="icon-button" id="settings-toggle" title="Open settings" type="button">⚙</button></div></header>
+
+      <section class="player-card">
+        <div class="album-art" id="album-art"><span>♪</span></div>
+        <div class="track-meta"><p class="overline" id="track-source">LOCAL PLAYER</p><h2 id="track-title">Waiting for a track</h2><p id="track-artist">Mixxx live metadata will appear here</p><div class="track-tags"><span id="sync-state">Waiting for lyrics</span><span id="line-count">0 lines</span></div></div>
+      </section>
+
+      <section class="lyrics-panel">
+        <div class="lyrics-toolbar"><div><p class="eyebrow">Synced lyrics</p><h3 id="lyrics-heading">Open a .lrc file to begin</h3></div><div class="toolbar-right"><label class="search-box"><span>⌕</span><input id="lyrics-search" type="search" placeholder="Find in lyrics" aria-label="Find in lyrics"></label><button class="icon-button" id="font-toggle" title="Increase lyric size" type="button">A<sup>+</sup></button></div></div>
+        <div class="lyrics-list" id="lyrics-list"><div class="empty-state"><div class="empty-glyph">◌</div><h3>Your song, in time</h3><p>Load an audio file and its synced lyrics. Every line becomes a precise seek point.</p><button class="secondary-button" id="load-empty" type="button">Choose files</button></div></div>
+      </section>
+
+      <footer class="transport"><div class="transport-time"><span id="current-time">00:00</span><span id="total-time">00:00</span></div><input class="progress" id="progress" type="range" min="0" max="100" value="0" step="0.1" aria-label="Song progress"><div class="transport-controls"><button class="skip-button" id="back-button" title="Back 10 seconds" type="button">↶</button><button class="play-button" id="play-button" title="Play" type="button">▶</button><button class="skip-button" id="forward-button" title="Forward 10 seconds" type="button">↷</button><span class="volume-wrap">◖<input id="volume" type="range" min="0" max="1" value="0.85" step="0.01" aria-label="Volume"></span></div></footer>
+    </section>
+  </main>
+
+  <section class="settings-drawer" id="settings-drawer" aria-hidden="true"><div class="drawer-heading"><div><p class="eyebrow">Connection</p><h2>Settings</h2></div><button class="icon-button" id="settings-close" type="button">×</button></div><p class="drawer-copy">Choose your lyrics library here. Icecast remains the default; the optional Mixxx bridge provides exact deck position and seeking.</p><label class="field-label" for="stats-url">Icecast metadata URL</label><input class="text-input" id="stats-url" value="http://127.0.0.1:8000/status-json.xsl?mount=/live"><label class="toggle-field"><input id="mixxx-bridge-toggle" type="checkbox"><span>Use Mixxx bridge</span></label><label class="field-label" for="sync-offset">Sync offset <span id="offset-value">0.0s</span></label><input id="sync-offset" type="range" min="-5" max="5" value="0" step="0.1"><button class="primary-button full-width" id="library-folder-button" type="button">Choose library folder</button><button class="primary-button full-width" id="save-settings" type="button">Save settings</button><p class="settings-status" id="settings-status"></p></section>
+  <input id="audio-picker" type="file" accept="audio/*" hidden>
+  <input id="lrc-picker" type="file" accept=".lrc,text/plain" hidden>
+  <input id="folder-picker" type="file" webkitdirectory directory multiple hidden>
+  <audio id="audio" preload="metadata"></audio>
+  <script type="module" src="renderer.js"></script>
+</body>
+</html>

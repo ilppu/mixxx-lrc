@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MixxxMIDIPreset schemaVersion="1" mixxxVersion="2.4+">
+  <info>
+    <name>Mixxx LRC Bridge</name>
+    <author>mixxx-lrc</author>
+    <description>Streams Mixxx deck state to the optional mixxx-lrc Electron bridge.</description>
+  </info>
+  <controller id="Mixxx LRC Bridge">
+    <scriptfiles>
+      <file filename="mixxx_lrc.js" functionprefix="MixxxLrc" />
+    </scriptfiles>
+    <controls>
+      <control>
+        <group>[Channel1]</group>
+        <key>MixxxLrc.incoming</key>
+        <status>0xF0</status>
+        <options>
+          <Script-Binding />
+        </options>
+      </control>
+    </controls>
+    <outputs />
+  </controller>
+</MixxxMIDIPreset>
