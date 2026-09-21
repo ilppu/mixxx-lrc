@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('mixxxLrc', {
   fetchJson: (url) => ipcRenderer.invoke('fetch-json', url),
+  trackInfo: (filePath, accurate) => ipcRenderer.invoke('track-info', filePath, Boolean(accurate)),
+  mixxxLibraryLookup: (duration) => ipcRenderer.invoke('mixxx-library-lookup', duration),
   coverArt: (filePath) => ipcRenderer.invoke('cover-art', filePath),
   seekMixxx: (baseUrl, seconds) => ipcRenderer.invoke('seek-mixxx', baseUrl, seconds),
   pickDirectory: () => ipcRenderer.invoke('pick-directory'),

@@ -37,7 +37,7 @@ function decodeBridgeMessage(message) {
 
   try {
     const payload = JSON.parse(chars.join(''));
-    bridgeLog('received bridge packet', JSON.stringify({ bytes: message.length, payload }));
+    // bridgeLog('received bridge packet', JSON.stringify({ bytes: message.length, payload }));
     return payload;
   } catch {
     bridgeLog('failed to decode bridge packet', JSON.stringify({ bytes: message.length }));
@@ -265,6 +265,36 @@ ipcMain.handle('cover-art', async (_event, filePath) => {
   } catch (error) {
     bridgeLog('cover art metadata failed', error.message);
     return '';
+  }
+});
+ipcMain.handle('track-info', async (_event, filePath, accurate = false) => {
+  const empty = { duration: 0, bpm: 0, key: '', title: '', artist: '' };
+  if (!filePath) return empty;
+  try {
+    const { parseFile } = await import('music-metadata');
+    const metadata = await parseFile(filePath, { skipCovers: true, duration: Boolean(accurate) });
+    return {
+      duration: Number(metadata.format.duration) || 0,
+      bpm: Number(metadata.common.bpm) || 0,
+      key: metadata.common.key || '',
+      title: metadata.common.title || '',
+      artist: metadata.common.artist || '',
+    };
+  } catch (error) {
+    bridgeLog('track info failed', `${filePath}: ${error.message}`);
+    return empty;
+  }
+});
+ipcMain.handle('mixxx-library-lookup', async (_event, duration) => {
+  try {
+    const { findTracks } = require('./src/mixxx-db.js');
+    const result = await findTracks(Number(duration) || 0);
+    if (result.rows) bridgeLog('mixxx database lookup', JSON.stringify({ dbPath: result.dbPath, rows: result.rows.length }));
+    else bridgeLog('mixxx database unavailable', result.error);
+    return result;
+  } catch (error) {
+    bridgeLog('mixxx database lookup failed', error.message);
+    return { dbPath: '', rows: null, error: error.message };
   }
 });
 ipcMain.handle('midi-ports', () => midiPorts());

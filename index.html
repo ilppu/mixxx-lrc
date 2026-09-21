@@ -13,7 +13,7 @@
 
       <section class="player-card">
         <div class="album-art" id="album-art"><span>♪</span></div>
-        <div class="track-meta"><p class="overline" id="track-source">LOCAL PLAYER</p><h2 id="track-title">Waiting for a track</h2><p id="track-artist">Mixxx live metadata will appear here</p><div class="track-tags"><span id="sync-state">Waiting for lyrics</span><span id="line-count">0 lines</span></div></div>
+        <div class="track-meta"><p class="overline" id="track-source">LOCAL PLAYER</p><h2 id="track-title">Waiting for a track</h2><p id="track-artist">Mixxx live metadata will appear here</p><div class="track-tags"><span id="sync-state">Waiting for lyrics</span><span id="line-count">0 lines</span><span id="track-bpm">— BPM</span><span id="track-key">Key —</span></div></div>
       </section>
 
       <section class="lyrics-panel">
@@ -25,7 +25,7 @@
     </section>
   </main>
 
-  <section class="settings-drawer" id="settings-drawer" aria-hidden="true"><div class="drawer-heading"><div><p class="eyebrow">Connection</p><h2>Settings</h2></div><button class="icon-button" id="settings-close" type="button">×</button></div><p class="drawer-copy">Choose your lyrics library here. Icecast remains the default; the optional Mixxx bridge provides exact deck position and seeking.</p><label class="field-label" for="stats-url">Icecast metadata URL</label><input class="text-input" id="stats-url" value="http://127.0.0.1:8000/status-json.xsl?mount=/live"><label class="toggle-field"><input id="mixxx-bridge-toggle" type="checkbox"><span>Use Mixxx bridge</span></label><label class="field-label" for="sync-offset">Sync offset <span id="offset-value">0.0s</span></label><input id="sync-offset" type="range" min="-5" max="5" value="0" step="0.1"><button class="primary-button full-width" id="library-folder-button" type="button">Choose library folder</button><button class="primary-button full-width" id="save-settings" type="button">Save settings</button><p class="settings-status" id="settings-status"></p></section>
+  <section class="settings-drawer" id="settings-drawer" aria-hidden="true"><div class="drawer-heading"><div><p class="eyebrow">Connection</p><h2>Settings</h2></div><button class="icon-button" id="settings-close" type="button">×</button></div><p class="drawer-copy">Choose your lyrics library here. Turn on the Mixxx bridge to identify tracks, position and seeking straight from the deck (no broadcasting needed). Icecast is the fallback when the bridge is off.</p><label class="field-label" for="stats-url">Icecast metadata URL</label><input class="text-input" id="stats-url" value="http://127.0.0.1:8000/status-json.xsl?mount=/live"><label class="toggle-field"><input id="mixxx-bridge-toggle" type="checkbox"><span>Use Mixxx bridge</span></label><label class="field-label" for="sync-offset">Sync offset <span id="offset-value">0.0s</span></label><input id="sync-offset" type="range" min="-5" max="5" value="0" step="0.1"><button class="primary-button full-width" id="library-folder-button" type="button">Choose library folder</button><button class="primary-button full-width" id="save-settings" type="button">Save settings</button><p class="settings-status" id="settings-status"></p></section>
   <input id="audio-picker" type="file" accept="audio/*" hidden>
   <input id="lrc-picker" type="file" accept=".lrc,text/plain" hidden>
   <input id="folder-picker" type="file" webkitdirectory directory multiple hidden>

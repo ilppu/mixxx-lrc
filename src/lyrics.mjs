@@ -99,4 +99,97 @@ function formatTime(seconds) {
   return `${String(minutes).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
 }
 
-export { activeLineIndex, extractTrackTitleFromMetadata, formatTime, normalizeTrackTitle, parseSyncedLyrics, titleMatches };
+const KEY_NAMES = [
+  'C', 'Db', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B',
+  'Cm', 'C#m', 'Dm', 'Ebm', 'Em', 'Fm', 'F#m', 'Gm', 'G#m', 'Am', 'Bbm', 'Bm',
+];
+const PITCH_CLASSES = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+// Camelot wheel -> [pitch class, isMinor]
+const CAMELOT_MINOR = [8, 3, 10, 5, 0, 7, 2, 9, 4, 11, 6, 1]; // 1A..12A
+const CAMELOT_MAJOR = [11, 6, 1, 8, 3, 10, 5, 0, 7, 2, 9, 4]; // 1B..12B
+
+// Mixxx key numbers: 1-12 are C..B major, 13-24 are C..B minor, 0 is unknown.
+function keyToMixxxNumber(value) {
+  if (typeof value === 'number') {
+    return Number.isInteger(value) && value >= 1 && value <= 24 ? value : 0;
+  }
+  if (!value || typeof value !== 'string') return 0;
+  const text = value.trim();
+
+  const camelot = text.match(/^(\d{1,2})\s*([AaBb])$/);
+  if (camelot) {
+    const number = Number(camelot[1]);
+    if (number < 1 || number > 12) return 0;
+    const minor = camelot[2].toUpperCase() === 'A';
+    return (minor ? 13 : 1) + (minor ? CAMELOT_MINOR : CAMELOT_MAJOR)[number - 1];
+  }
+
+  const match = text.match(/^([A-Ga-g])([#♯b♭]?)\s*(.*)$/);
+  if (!match) return 0;
+  let pitch = PITCH_CLASSES[match[1].toUpperCase()];
+  if (match[2] === '#' || match[2] === '♯') pitch += 1;
+  if (match[2] === 'b' || match[2] === '♭') pitch -= 1;
+  pitch = (pitch + 12) % 12;
+  const quality = match[3].trim();
+  let minor;
+  if (quality === '' || quality === 'M' || /^maj(or)?$/i.test(quality)) minor = false;
+  else if (quality === 'm' || /^min(or)?$/i.test(quality)) minor = true;
+  else return 0;
+  return (minor ? 13 : 1) + pitch;
+}
+
+function keyLabel(number) {
+  return KEY_NAMES[number - 1] || '';
+}
+
+function bpmClose(left, right) {
+  const tolerance = Math.max(1, left * 0.01);
+  return [1, 2, 0.5].some((factor) => Math.abs(left - right * factor) <= tolerance);
+}
+
+// deck: { duration, bpm, key }.  candidates: [{ duration, bpm, key, hasLyric, tagKey, stemKey }]
+// (0 / '' / false = unknown). Duration narrows the list; BPM and key only add score, they never rule a
+// file out, because tags often come from other software and can disagree with Mixxx's analysis.
+// Files that are the same song (same tags or same file name, e.g. an mp3 and a flac copy) count as one
+// answer, so duplicates don't make a match ambiguous. Returns a candidate or null.
+function resolveTrackMatch(deck, candidates, { durationTolerance = 0.5, guess = false } = {}) {
+  const none = { item: null, ambiguous: false };
+  if (!deck?.duration || !Array.isArray(candidates)) return none;
+  const close = candidates.filter((item) => item.duration > 0 && Math.abs(item.duration - deck.duration) <= durationTolerance);
+  if (close.length === 0) return none;
+  if (close.length === 1) return { item: close[0], ambiguous: false };
+
+  const deckKey = keyToMixxxNumber(deck.key);
+  const scored = close.map((item) => {
+    let score = 0;
+    if (deck.bpm > 0 && item.bpm > 0 && bpmClose(deck.bpm, item.bpm)) score += 1;
+    const itemKey = keyToMixxxNumber(item.key);
+    if (deckKey && itemKey && deckKey === itemKey) score += 1;
+    return { item, score };
+  });
+
+  const best = Math.max(...scored.map((entry) => entry.score));
+  const top = scored.filter((entry) => entry.score === best).map((entry) => entry.item);
+  if (top.length === 1) return { item: top[0], ambiguous: false };
+
+  const sameSong = (left, right) => (
+    (left.tagKey && left.tagKey === right.tagKey) || (left.stemKey && left.stemKey === right.stemKey)
+  );
+  if (top.every((item) => sameSong(top[0], item))) {
+    return { item: top.find((item) => item.hasLyric) || top[0], ambiguous: false };
+  }
+  if (!guess) return { item: null, ambiguous: true };
+
+  // Still tied between different songs: prefer one that has lyrics, then the closest duration.
+  const ranked = [...top].sort((left, right) => (
+    (Number(Boolean(right.hasLyric)) - Number(Boolean(left.hasLyric)))
+    || (Math.abs(left.duration - deck.duration) - Math.abs(right.duration - deck.duration))
+  ));
+  return { item: ranked[0], ambiguous: true };
+}
+
+function pickTrackMatch(deck, candidates, options) {
+  return resolveTrackMatch(deck, candidates, options).item;
+}
+
+export { keyLabel, keyToMixxxNumber, pickTrackMatch, resolveTrackMatch, activeLineIndex, extractTrackTitleFromMetadata, formatTime, normalizeTrackTitle, parseSyncedLyrics, titleMatches };

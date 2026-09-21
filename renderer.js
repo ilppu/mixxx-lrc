@@ -1,4 +1,4 @@
-import { activeLineIndex, extractTrackTitleFromMetadata, formatTime, normalizeTrackTitle, parseSyncedLyrics, titleMatches } from './src/lyrics.mjs';
+import { activeLineIndex, extractTrackTitleFromMetadata, formatTime, keyLabel, normalizeTrackTitle, parseSyncedLyrics, resolveTrackMatch, titleMatches } from './src/lyrics.mjs';
 
 const $ = (selector) => document.querySelector(selector);
 const audio = $('#audio');
@@ -20,7 +20,15 @@ const state = {
   libraryPath: localStorage.getItem('libraryPath') || '',
   mixxxTitle: '',
   mixxxDuration: 0,
-  durationMatchCache: new Map(),
+  mixxxBpm: 0,
+  mixxxKey: 0,
+  infoCache: new Map(),
+  lastBridgePacketAt: 0,
+  deckIdentity: '',
+  deckDetail: '',
+  deckMatched: false,
+  matchRun: 0,
+  databaseError: '',
   mixxxBridgeEnabled: localStorage.getItem('mixxxBridgeEnabled') === 'true',
   mixxxBridgeConnected: false,
   mixxxClockStartedAt: 0,
@@ -263,58 +271,223 @@ async function seekCurrentMixxx(targetSeconds) {
   return sent;
 }
 
-async function findLibraryMatchForDuration(duration) {
-  if (!duration || !state.library.length) return null;
-  const candidates = state.library.filter((entry) => entry.audio?.path);
-  const matches = [];
-  for (const entry of candidates) {
-    const path = entry.audio.path;
-    if (!state.durationMatchCache.has(path)) {
-      state.durationMatchCache.set(path, new Promise((resolve) => {
-        const probe = new Audio();
-        probe.addEventListener('loadedmetadata', () => resolve(probe.duration));
-        probe.addEventListener('error', () => resolve(0));
-        probe.src = `file://${path}`;
-      }));
-    }
-    const candidateDuration = await state.durationMatchCache.get(path);
-    if (Math.abs(candidateDuration - duration) < 0.25) matches.push(entry);
+const TRACK_INFO_CONCURRENCY = 16;
+
+function getTrackInfo(path, accurate = false) {
+  const cacheKey = `${accurate ? 'exact' : 'quick'}:${path}`;
+  if (!state.infoCache.has(cacheKey)) {
+    const empty = { duration: 0, bpm: 0, key: '', title: '', artist: '' };
+    state.infoCache.set(cacheKey, window.mixxxLrc.trackInfo(path, accurate).catch(() => empty));
   }
-  return matches.length === 1 ? matches[0] : null;
+  return state.infoCache.get(cacheKey);
+}
+
+async function mapLimit(items, limit, task) {
+  const results = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      results[index] = await task(items[index], index);
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+// Reads duration/BPM/key tags for the whole library in the background so the first match is quick.
+function prewarmLibraryInfo() {
+  const entries = state.library.filter((entry) => entry.audio?.path);
+  mapLimit(entries, 4, (entry) => getTrackInfo(entry.audio.path));
+}
+
+function normalizePath(value) {
+  return String(value || '').replace(/\\/g, '/').toLowerCase();
+}
+
+function findLibraryEntryForPath(filePath) {
+  const wanted = normalizePath(filePath);
+  const byPath = state.library.find((entry) => normalizePath(entry.audio?.path) === wanted);
+  if (byPath) return byPath;
+  const wantedName = wanted.split('/').pop();
+  return state.library.find((entry) => normalizePath(entry.audio?.path).split('/').pop() === wantedName) || null;
+}
+
+// Preferred: ask Mixxx's own library database. Its duration, BPM and key are the same analysis the deck reports,
+// so they identify the track far better than tags in the audio files. Returns null if that isn't possible.
+async function findMatchFromMixxxDatabase(deck) {
+  const lookup = await window.mixxxLrc.mixxxLibraryLookup(deck.duration).catch((error) => ({ rows: null, error: error.message }));
+  if (!lookup?.rows) {
+    state.databaseError = lookup?.error || 'unavailable';
+    return null;
+  }
+  state.databaseError = '';
+  const candidates = lookup.rows
+    .map((row) => {
+      const entry = findLibraryEntryForPath(row.path);
+      if (!entry) return null;
+      return {
+        entry,
+        duration: row.duration,
+        bpm: row.bpm,
+        key: row.keyId,
+        title: row.title,
+        artist: row.artist,
+        hasLyric: Boolean(entry.lyric),
+        tagKey: row.title ? normalizeTrackTitle(`${row.artist} ${row.title}`) : '',
+        stemKey: normalizeTrackTitle(entry.title),
+      };
+    })
+    .filter(Boolean);
+  if (candidates.length === 0) return null;
+
+  const { item: match, ambiguous } = resolveTrackMatch(deck, candidates, { guess: true });
+  const near = candidates.filter((item) => Math.abs(item.duration - deck.duration) <= 0.5);
+  const closest = [...candidates].sort((left, right) => Math.abs(left.duration - deck.duration) - Math.abs(right.duration - deck.duration))[0];
+  return {
+    match: match ? { entry: match.entry, info: match } : null,
+    closest: closest ? { title: closest.entry.title, duration: closest.duration } : null,
+    tied: near.map((item) => item.entry.title),
+    ambiguous,
+    source: 'Mixxx library',
+  };
+}
+
+// Two passes: a fast header read for every file, then a full-scan (accurate) duration only for the few
+// files that are close, because header durations of VBR files can be off by several seconds.
+async function findLibraryMatchForDeck(deck) {
+  const result = { match: null, closest: null, tied: [], ambiguous: false, source: 'file tags' };
+  if (!deck.duration || !state.library.length) return result;
+  const fromDatabase = await findMatchFromMixxxDatabase(deck);
+  if (fromDatabase) return fromDatabase;
+  if (state.databaseError) result.source = `file tags; Mixxx database unavailable: ${state.databaseError}`;
+  const entries = state.library.filter((entry) => entry.audio?.path);
+  const quick = await mapLimit(entries, TRACK_INFO_CONCURRENCY, (entry) => getTrackInfo(entry.audio.path));
+  const near = entries
+    .map((entry, index) => ({ entry, ...quick[index] }))
+    .filter((item) => !item.duration || Math.abs(item.duration - deck.duration) <= 10);
+  const candidates = await mapLimit(near, 8, async (item) => {
+    const exact = await getTrackInfo(item.entry.audio.path, true);
+    const merged = { ...item, ...exact, duration: exact.duration || item.duration };
+    return {
+      ...merged,
+      hasLyric: Boolean(item.entry.lyric),
+      tagKey: merged.title ? normalizeTrackTitle(`${merged.artist} ${merged.title}`) : '',
+      stemKey: normalizeTrackTitle(item.entry.title),
+    };
+  });
+  const { item: match, ambiguous } = resolveTrackMatch(deck, candidates, { guess: true });
+  result.ambiguous = ambiguous;
+  if (match) result.match = { entry: match.entry, info: match };
+  const known = candidates.filter((item) => item.duration > 0);
+  known.sort((left, right) => Math.abs(left.duration - deck.duration) - Math.abs(right.duration - deck.duration));
+  if (known[0]) result.closest = { title: known[0].entry.title, duration: known[0].duration };
+  result.tied = known
+    .filter((item) => Math.abs(item.duration - deck.duration) <= 0.5)
+    .map((item) => item.entry.title);
+  return result;
+}
+
+function showDeckDetails(bpm, key) {
+  setText('#track-bpm', bpm > 0 ? `${bpm.toFixed(1)} BPM` : '— BPM');
+  setText('#track-key', keyLabel(key) ? `Key ${keyLabel(key)}` : 'Key —');
+}
+
+function resetForNewDeckTrack() {
+  state.lines = [];
+  state.currentIndex = -1;
+  state.lyricFileName = '';
+  state.audioFileName = '';
+  state.matchedLibraryTitle = '';
+  state.mixxxTitle = '';
+  setText('#track-title', 'Identifying track…');
+  setText('#track-artist', 'Matching against your library');
+  setText('#lyrics-heading', 'Open a .lrc file to begin');
+  setText('#line-count', '0 lines');
+  setText('#sync-state', 'Waiting for lyrics');
+  renderLyrics();
+}
+
+async function matchDeckTrack() {
+  state.matchRun += 1;
+  const run = state.matchRun;
+  const deck = { duration: state.mixxxDuration, bpm: state.mixxxBpm, key: state.mixxxKey };
+  if (!state.library.length) {
+    setText('#connection-detail', 'Choose your library folder to identify tracks');
+    return;
+  }
+  setText('#connection-detail', 'Matching track…');
+  const { match: found, closest, tied, ambiguous, source } = await findLibraryMatchForDeck(deck);
+  if (run !== state.matchRun || !state.mixxxBridgeEnabled) return; // a newer track or setting change superseded this
+  if (!found) {
+    bridgeLog('no library match for deck', { deck, closest, tied, source, databaseError: state.databaseError });
+    setText('#track-title', 'Unknown track');
+    setText('#connection-detail', tied.length > 1
+      ? `Ambiguous (${tied.length} files ~${deck.duration.toFixed(1)}s): ${tied.slice(0, 3).join(' | ')}`
+      : closest
+      ? `No match for ${deck.duration.toFixed(1)}s; closest: ${closest.title} (${closest.duration.toFixed(1)}s)`
+      : `No library file near ${deck.duration.toFixed(1)}s (${state.library.length} files scanned)`);
+    return;
+  }
+  bridgeLog('matched deck to library track', { deck, title: found.entry.title, source });
+  state.deckMatched = true;
+  state.mixxxTitle = found.entry.title;
+  applyLibraryMatch(found.entry);
+  if (found.info.artist) setText('#track-artist', found.info.artist);
+  setText('#connection-detail', ambiguous
+    ? `Best guess of ${tied.length} similar files: ${found.entry.title}`
+    : `${found.entry.title}`);
 }
 
 function handleMixxxBridgeMessage(payload) {
-  bridgeLog('received state', payload);
   if (!state.mixxxBridgeEnabled || payload?.type !== 'state') return;
   state.mixxxBridgeConnected = true;
+  state.lastBridgePacketAt = Date.now();
   state.mixxxDuration = Number(payload.duration) || 0;
   state.mixxxClockStartedAt = Date.now() - (Number(payload.position) || 0) * 1000;
   state.mixxxClockOffset = 0;
-  // setText('#connection-label', 'Mixxx bridge connected');
-  // setText('#connection-detail', payload.loaded ? 'Deck position connected' : 'Waiting for a loaded deck');
+  setText('#connection-label', 'Mixxx bridge');
+
   if (!payload.loaded) {
-    bridgeLog('Mixxx bridge is connected but no track is loaded');
+    state.deckIdentity = '';
+    state.deckDetail = '';
+    state.deckMatched = false;
+    state.matchRun += 1;
+    state.mixxxBpm = 0;
+    state.mixxxKey = 0;
+    showDeckDetails(0, 0);
+    setText('#connection-detail', 'Waiting for a loaded deck');
     updateMixxxPlayback();
     return;
   }
-  // setText('#track-source', 'MIXXX BRIDGE');
+
+  state.mixxxBpm = Number(payload.bpm) || 0;
+  state.mixxxKey = Math.round(Number(payload.key)) || 0;
+  showDeckDetails(state.mixxxBpm, state.mixxxKey);
+
   if (payload.title) {
     state.mixxxTitle = payload.title;
     setText('#track-title', payload.title);
     maybeAutoMatchMixxxTrack();
-  } else {
-    const durationAtPacket = state.mixxxDuration;
-    setTimeout(() => findLibraryMatchForDuration(durationAtPacket).then((match) => {
-      if (!match || !state.mixxxBridgeEnabled) {
-        bridgeLog('no library match for Mixxx duration', state.mixxxDuration);
-       // setText('#connection-detail', `Connected; no library match (${state.mixxxDuration.toFixed(1)}s)`);
-        return;
-      }
-      bridgeLog('matched Mixxx deck by duration', { duration: state.mixxxDuration, title: match.title });
-      state.mixxxTitle = match.title;
-      setText('#track-title', match.title);
-      applyLibraryMatch(match);
-    }), 1500);
+    updateMixxxPlayback();
+    return;
+  }
+
+  // Identify the track from the deck itself: duration first, BPM and key as tie-breakers.
+  // Only start a match when the track changes (or when BPM/key arrive for a still-unmatched track),
+  // not on every 200ms packet.
+  const identity = state.mixxxDuration.toFixed(1);
+  const detail = `${state.mixxxBpm.toFixed(1)}|${state.mixxxKey}`;
+  if (identity !== state.deckIdentity) {
+    state.deckIdentity = identity;
+    state.deckDetail = detail;
+    state.deckMatched = false;
+    resetForNewDeckTrack();
+    matchDeckTrack();
+  } else if (detail !== state.deckDetail) {
+    state.deckDetail = detail;
+    if (!state.deckMatched) matchDeckTrack();
   }
   updateMixxxPlayback();
 }
@@ -326,6 +499,9 @@ async function configureMixxxBridge() {
   if (!enabled) {
     await window.mixxxLrc.disconnectMidi();
     state.mixxxBridgeConnected = false;
+    state.deckIdentity = '';
+    state.deckMatched = false;
+    state.matchRun += 1;
     $('#settings-status').textContent = 'Mixxx bridge disabled; Icecast mode is active';
     return;
   }
@@ -455,6 +631,8 @@ function clearFiles() {
 }
 
 async function pollMixxx() {
+  // While the bridge is streaming deck state, Icecast (and Mixxx broadcasting) is not needed.
+  if (state.mixxxBridgeEnabled && Date.now() - state.lastBridgePacketAt < 3000) return;
   const url = $('#stats-url').value.trim();
   state.mixxxStatusUrl = url;
   try {
@@ -492,6 +670,8 @@ async function loadFolder(files) {
     localStorage.setItem('libraryPath', state.libraryPath);
   }
   $('#settings-status').textContent = `${state.library.length} audio files ready for auto-matching`;
+  prewarmLibraryInfo();
+  if (state.mixxxBridgeEnabled && state.deckIdentity && !state.deckMatched) matchDeckTrack();
   if (state.mode === 'mixxx' && state.mixxxTitle) {
     maybeAutoMatchMixxxTrack();
   } else if (state.trackTitle) {
